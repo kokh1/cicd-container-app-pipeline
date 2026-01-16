@@ -1,0 +1,105 @@
+#ignore environment variable file
+.env
+.env.*
+
+#ignore secrets files
+*.key
+*.pem
+
+#ignore Python virtual envirnoement for app.py
+venv/
+
+#ignore Python virtual environment for local-registry_fe.py
+local-registry_fe_venv/
+
+#ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+#ignore temporary output folders
+tmp/
+
+#ignore any docker compose yml files
+docker-compose.*.yml
+
+#ignore local ci Kubernetes config files
+ci-kubeconfig.yaml
+ci_kube/config
+
+#ignore automation script to trigger the pipeline
+run_pipeline.sh
+
+#ignore unsanitized kubeconfigs
+ci_kube/config
+ci_kube/config.container
+
+#ignore output of helper scripts
+OUTPUT
+
+#ignore vs code config file
+.vscode/
+
+#ignore lessons-learned-along-the-way folder
+/lessons-learned-along-the-way
+
+#ignore venv for local-registry_fe.py
+local-registry_fe_venv/
+
+#ignore editor files
+*.swp
+*.swo
+*.swn
+*~
+
+#ignore ide config files
+.vscode/
+.idea/
+
+#ignore system files
+.DS_Store
+Thumbs.db
+
+#ignore build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+tmp/
+
+#ignore runner/CI config
+.runner_system_id
+
+#ignore generated archives
+*.tar
+*.tar.gz
+*.zip
+
+#ignore push-public.sh
+push-public.sh
+
+#ignore CHANGELOG.md
+CHANGELOG.md
+
+#ignore folder containing TLS certs
+demo-certs/
+
+#ignore local-project-test/
+local-project-test/
+
+#ignore deploy-jobs-custom-latest.tar (stale)
+deploy-jobs-custom-latest.tar
+
+#ignore .DS_Store files
+.DS_Store
+k8s/.DS_Store
+tests/.DS_Store
+
+#ignore DUMMY.md
+DUMMY.md
+
+#ignore logs
+logs/
+*.log

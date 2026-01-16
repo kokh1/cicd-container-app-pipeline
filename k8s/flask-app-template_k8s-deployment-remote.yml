@@ -1,0 +1,53 @@
+#this is the Kubernetes deployment YAML file for the application when using the remote deployment workflow
+  #the DEPLOYMENT defines how many replicas of the app to run and the container configuration
+  #the SERVICE exposes the app internally in Kubernetes (and externally using a LoadBalancer)
+
+apiVersion: apps/v1
+kind: Deployment
+metadata: 
+  name: flask-app-template
+  namespace: default
+spec: 
+  replicas: 1 #use a t3.small cluster for more pods
+  selector: 
+    matchLabels: 
+      app: flask-app-template
+  template: 
+    metadata: 
+      labels: 
+        app: flask-app-template
+    spec:  
+      containers: 
+      - name: flask-app-template
+        image: ${DEPLOY_IMAGE} #${REGISTRY_IMAGE_NAME} 
+        imagePullPolicy: Always
+        ports: 
+          - containerPort: 5000 #comes from app.py
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+      imagePullSecrets:
+        - name: ${REMOTE_DEPLOY_IMAGE_PULL_SECRET} #secret created in deploy_remote job for pulling from registries that need auth           
+---
+apiVersion: v1
+kind: Service
+metadata: 
+  name: flask-app-template-service
+  namespace: default
+  labels: 
+    app: flask-app-template
+spec: 
+  type: LoadBalancer
+  selector: 
+    app: flask-app-template
+  ports:   
+    - protocol: TCP
+      port: 80 #port the service exposes to other pods in the cluster or externally for LoadBalancer (aka the exposed/external port)
+      targetPort: 5000 #container port inside the pod (the port the app listens on) aka containerPort
+
+
+

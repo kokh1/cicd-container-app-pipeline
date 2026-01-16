@@ -1,0 +1,32 @@
+#this tells Docker what to ignore when doing the build
+#things in this list don't get sent to the Docker daemon as build context during the build
+
+#ignore Git history
+.git
+.gitignore
+
+#CI/CD temp files
+.gitlab-ci.yml
+rendered-deployment.yml
+
+#ignore local logs
+*.log
+
+#ignore os-specific files
+.DS_Store
+Thumbs.db
+
+#ignore build artifacts not needed by subsequent jobs
+dist/
+build/
+*.pyc
+__pycache__/
+
+#ignore Docker-specific files that aren't needed inside the image
+.dockerignore
+
+#editor files
+.vscode/
+*.swp
+*.swo
+.idea/

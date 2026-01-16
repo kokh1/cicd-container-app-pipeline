@@ -1,0 +1,6 @@
+#list of all dependencies that will be installed when building the Docker image
+
+Flask
+requests
+python-dotenv
+pytest

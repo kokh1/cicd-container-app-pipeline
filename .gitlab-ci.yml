@@ -1,0 +1,595 @@
+#this is the Gitlab CI/CD configuration file
+#this will automate the Docker build, test, and deploy process
+#this file RETAINS A LOT OF VERTIGIAL LOGIC from earlier iterations and allows you to see the evolution of the project over time
+
+before_script:
+  - git remote set-url gitlab http://root:${GITLAB_TOKEN_1}@gitlab/local-testing/local-project-test.git
+    #sets the git remote url to use the personal access token for authentication
+    #assumes that the gitlab ce and the runner are running in docker containers on the same network
+    #HAS TO BE HARDCODED b/c runner container unaware of host machine's env file or GITLAB_PORT variable
+    #because ci jobs are isolated and ephemeral
+    #HAVE TO MANUALLY CHANGE THIS IF THE REMOTE EVER CHANGES
+  - printenv CI_SERVER_URL
+  - printenv
+  - cat /etc/hostname
+  - cat /etc/os-release
+  - echo "Setting Gitlab remote URL..."
+  - git remote -v
+    #added to verify that the git remote url is set correctly
+  - git config --global url."http://root:${GITLAB_PAT}@gitlab/".insteadOf "http://localhost:8929/"
+    #assumes that gitlab ce and the runner are running in docker containers on the same netowrk
+    #has to be hardcoded b/c runner container unaware of host machine's env file or GITLAB_PORT variable
+    #because ci jobs are isolated and ephemeral
+  - git config --get regexp url
+    #added to verify that the git config runs before the git clone starts
+
+stages:
+  - build
+  - test
+  - deploy
+
+#variables:
+  #DOCKER_PUSH_TARGET: "${DOCKER_PUSH_TARGET:-gitlab-local}" #specifies where to push the docker image to
+    #options: gitlab-local, gitlab-public, github, docker
+    #manual override: set in Gitlab CI/CD variables
+
+#build the Docker image
+  #the build_docker_image command builds the Docker image from the Dockerfile 
+  #and pushes it to a registry based on the DOCKER_PUSH_TARGET variable in ci.variables
+build_docker_image: #this is technically the name of the job
+  image: ${BUILD_JOB_IMAGE} #whatever it is, it must have docker cli installed
+  stage: build
+  variables:
+    BUILD_JOB_IMAGE: ${BUILD_JOB_IMAGE:-docker:latest} #default to docker:latest if not set in Gitlab CI/CD variables
+    DOCKER_TLS_CERTDIR: "" #disable Docker TLS verification to avoid cert issues in CI
+    DOCKER_HOST: unix:///var/run/docker.sock #sets DOCKER_HOST var as the host's docker daemon via socket mount
+  before_script:
+    - echo "GITLAB_PORT=$GITLAB_PORT" #local only
+    - echo "Setting up environment for Docker build..."
+     #load variables from ci.variables file
+     #NOTE: for fully local workflow, can use the .env file 
+    - |
+      set -o allexport #export all variables
+      source ci.variables #load variables from ci.variables file
+      set +o allexport #stop exporting all variables
+    - DOCKER_PUSH_TARGET="${DOCKER_PUSH_TARGET:-gitlab-local}"
+    - export DOCKER_PUSH_TARGET
+    - echo "Using DOCKER_PUSH_TARGET=$DOCKER_PUSH_TARGET"
+    - echo "REMOTE_PULL_TARGET=$REMOTE_PULL_TARGET" #debug
+     #mount the docker socket only if the the DOCKER_PUSH_TARGET is the local registry
+    - |
+      if [ "$DOCKER_PUSH_TARGET" = "gitlab-local" ]; then
+        echo "Using host Docker socket for local registry push..."
+        export DOCKER_HOST="/var/run/docker.sock"
+        export DOCKER_TLS_VERIFY=""
+      fi
+    - echo "DOCKER_HUB_USERNAME is $DOCKER_HUB_USERNAME" #added for debugging auth error
+    - echo echo -n "DOCKER_HUB_PAT" | wc -c #added for debugging auth error
+    #debug to ensure correct auth and reading of variables
+    - which docker #added for debugging auth error
+    - docker --version #added for debugging auth error
+    - echo "Testing direct login" #added for debugging auth error
+    - echo "$DOCKER_HUB_PAT" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
+    - unset DOCKER_HOST #ensure build uses local docker daemon via socket mount
+    - export DOCKER_IMAGE_NAME="${CI_PROJECT_NAME:-flask-app-template}"
+    - export DOCKER_IMAGE_TAG="${CI_COMMIT_REF_NAME:-latest}"
+    - echo "CI_PROJECT_NAME:$CI_PROJECT_NAME" #added for debugging //"
+    - export CI_REGISTRY_NAME="host.docker.internal:8930" #added for debugging //
+    - export CI_REGISTRY_NAME="${CI_REGISTRY_NAME%/}" #remove trailing slash if present
+    - echo "CI_REGISTRY_NAME after stripping slash:$CI_REGISTRY_NAME" #added for debugging //
+    - echo "CI_PROJECT_NAME:$CI_PROJECT_NAME" #added for debugging //
+    - export DOCKER_IMAGE_NAME="${CI_PROJECT_NAME:-flask-app-template}" #added for debugging //
+    #- export REGISTRY_IMAGE_NAME="$CI_REGISTRY_NAME/$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG" #add for debugging //
+    - echo "CI_REGISTRY_NAME:$CI_REGISTRY_NAME" #added for debugging //
+    - echo "REGISTRY_IMAGE_NAME:$REGISTRY_IMAGE_NAME" #added for debugging //
+    - export DOCKER_IMAGE="$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+    - echo "DOCKER_IMAGE_NAME:$DOCKER_IMAGE_NAME"
+    - echo "DOCKER_IMAGE_TAG:$DOCKER_IMAGE_TAG"
+    - echo "DOCKER_IMAGE:$DOCKER_IMAGE"
+    - export REGISTRY_PORT="${GITLAB_PORT:-8930}" #default port for local gitlab container registry if not set in gitlab cicd variables
+    - echo "REGISTRY_PORT:${REGISTRY_PORT:-8930}"
+    - echo "DOCKER_HOST=$DOCKER_HOST" #debug to check docker host variable
+     #install bash and curl
+    - apk add --no-cache curl bash jq
+    #install syft (or whatever SBOM tool into the job container) and verify install
+    - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+    - syft version
+    #install grype  (or whatever vulerability scanner into the job container) and verify install
+    - curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+    - grype version
+
+  script:
+    #build image
+    #- git remote set-url gitlab http://gitlab/local-testing/local-project-test.git
+    - git remote -v
+    - echo "Building Docker image:$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+    #- REVERT: docker build --no-cache -t $DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG . 
+    - export BUILDKIT_PARALLELISM=1
+    - docker buildx create --name mybuilder --use
+    #test build with load for vuln scanning and sbom generation (per arch) and run epss filter script
+      #doing this way because RAM/not overloading the host docker daemon
+    - cd $CI_PROJECT_DIR
+    #temp build and load amd64 image, run grype on it and output to json and generate sbom
+    - docker buildx build --platform linux/amd64 --load -t temp-amd64 . 
+    - syft temp-amd64 -o json > sbom-amd64.json
+    - grype temp-amd64 -o json > grype-amd64.json
+    - docker rmi temp-amd64
+     #temp build and load ard64 image, run grype on it and output to json and generate sbom
+    - docker buildx build --platform linux/arm64 --load -t temp-arm64 . 
+    - syft temp-arm64 -o json > sbom-arm64.json
+    - grype temp-arm64 -o json > grype-arm64.json
+    - docker rmi temp-arm64
+    #run epss-check.sh helper script to filter out low epss criticals and fail pipeline if found
+    - bash epss-check.sh
+    #build for real
+    - docker buildx build --platform linux/amd64,linux/arm64 --no-cache -t $DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG . 
+      #REMOVE --no-cache flag from buildx build command for quicker builds
+      #do not use --load here because RAM/not overload the docker daemon
+    #remove the builder container and anything it spawned
+    - docker buildx rm mybuilder
+    - docker info | grep -i insecure #added for debug
+
+    #echo "Build complete for $DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+  
+    #dynamic login depending on registry #gitlab is default
+    #followed by dynamic push logic (note the # hash line)
+    - |
+      if [ "$DOCKER_PUSH_TARGET" = "gitlab-local" ]; then
+        echo "Logging into Gitlab Local Container Registry..."
+        PAT="$GITLAB_PAT"
+        echo "$PAT" | docker login "host.docker.internal:$REGISTRY_PORT" -u "localuser" -p "localpass"
+      elif [ "$DOCKER_PUSH_TARGET" = "gitlab-public" ]; then
+        echo "Logging into Gitlab Public Container Registry..."
+        PAT="$GITLAB_PAT"
+        echo "$PAT" | docker login "registry.gitlab.com" -u "$GITLAB_USERNAME" --password-stdin 
+      elif [ "$DOCKER_PUSH_TARGET" = "github" ]; then
+        echo "Logging into Github Container Registry..."
+        PAT="$GITHUB_PAT"
+        echo "$PAT" | docker login ghcr.io -u "$GITHUB_USERNAME" --password-stdin
+      else
+        echo "Logging into Docker Hub..."
+        PAT="$DOCKER_HUB_PAT"
+        echo "$PAT" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
+      fi
+      echo "Preparing to push image to $DOCKER_PUSH_TARGET..."
+      if [ "$DOCKER_PUSH_TARGET" = "gitlab-local" ]; then
+        echo "Pushing to Gitlab Local Container Registry"
+        PAT="$GITLAB_PAT"
+        echo "CI_REGISTRY_NAME='$CI_REGISTRY_NAME'"
+        REGISTRY_IMAGE_NAME="host.docker.internal:$REGISTRY_PORT/$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+      elif [ "$DOCKER_PUSH_TARGET" = "gitlab-public" ]; then
+        echo "Pushing to Gitlab Public Container Registry"
+        PAT=$GITLAB_PAT
+        echo "CI_REIGSTRY_NAME='$CI_REGISTRY_NAME'"
+        REGISTRY_IMAGE_NAME="registry.gitlab.com/$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+      elif [ "$DOCKER_PUSH_TARGET" = "github" ]; then
+        echo "Logging into Github Container Registry"
+        PAT="$GITHUB_PAT"
+        echo "$PAT" | docker login ghcr.io -u "$GITHUB_USERNAME" --password-stdin
+        REGISTRY_IMAGE_NAME="ghcr.io/$GITHUB_USERNAME/$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+      else
+        echo "Pushing to Docker Hub"
+        PAT="$DOCKER_HUB_PAT"
+        echo "$PAT" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
+        REGISTRY_IMAGE_NAME="hub.docker.com/$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+        echo "REGISTRY_IMAGE_NAME=$REGISTRY_IMAGE_NAME"
+      fi
+      echo "Tag and push image using registry-specific naming and tagging..."
+      echo "DOCKER_IMAGE_NAME=$DOCKER_IMAGE_NAME" >> deploy.env
+      echo "DOCKER_IMAGE_TAG=$DOCKER_IMAGE_TAG" >> deploy.env
+      echo "REGISTRY_IMAGE_NAME=$REGISTRY_IMAGE_NAME" >> deploy.env
+      docker buildx build --platform linux/amd64,linux/arm64 -t "$REGISTRY_IMAGE_NAME" -t "${REGISTRY_IMAGE_NAME%:*}:latest" --push . 
+  artifacts:
+    name: "artifacts-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - sbom-amd64.json
+      - sbom-arm64.json
+      - grype-amd64.json
+      - grype-arm64.json
+      - deploy.env #saves the deploy.env file as an artifact to pass variables to the deploy stage
+    expire_in: 2 days
+
+#run tests
+  #the test command runs tests using pytest
+run_tests:
+  #image: python:3.9-slim
+  image: cicirello/pyaction:latest #use a docker image that includes git
+  stage: test
+  before_script:
+    - echo "Setting up environment for tests..."
+    - cd local-project-test #change directory into the cloned project directory that has git
+    - python3 -m venv venv #creates a virtual environment named venv
+    - source venv/bin/activate #activate the venv
+    - venv/bin/pip install --upgrade pip
+    - venv/bin/pip install -r ../requirements.txt
+    - git remote add gitlab http://root:${GITLAB_TOKEN_1}@gitlab/local-testing/local-project-test.git
+      #since each job runs in an ephemeral executor container with a fresh clone of the repo, have to manually add the gitlab remote
+      #have to manually change this if using a different remote
+    - git remote set-url gitlab http://root:${GITLAB_TOKEN_1}@gitlab/local-testing/local-project-test.git
+      #sets the git remote url to use the personal access token for authentication
+      #assumes that the gitlab ce and the runner are running in docker containers on the same network
+      #has to be hardcoded b/c runner container unaware of host machine's env file or GITLAB_PORT variable
+      #because ci jobs are isolated and ephemeral
+    - git remote -v
+    - git config --global url."http://root:${GITLAB_PAT}@gitlab/".insteadOf "http://localhost:8929/"
+      #assumes that gitlab ce and the runner are running in docker containers on the same netowrk
+      #has to be hardcoded b/c runner container unaware of host machine's env file or GITLAB_PORT variable
+      #because ci jobs are isolated and ephemeral
+    - git remote -v
+    - export $(grep -v '^#|^$' .env | xargs) #load environment variables from .env file
+      #'^#|^$' ignores comment lines and blank lines in the .env file
+      #xargs turns key-value pairs into exportable variables
+    - unset DOCKER_HOST #ensure build uses local docker daemon via socket mount
+    - echo "Installing test dependencies..."
+  
+  script:
+    - echo "Running tests..."
+    #- apt-get update && apt-get install -y git #only needed if git not included in the base image
+    - source venv/bin/activate #reactivate the venv
+    - venv/bin/python -m pytest ../tests
+      #this runs all tests from the project root and runs all test in the tests/ directory
+      #this is necessary so that pytest can find the app code to run tests on it
+
+#deploy to Kubernetes
+  #MAKE SURE MINIKUBE IS STARTED ON HOST
+deploy_local: 
+  stage: deploy
+  image: 
+    name: heyvaldemar/aws-kubectl:latest #has kubectl and awscli2
+    entrypoint: [""]
+    pull_policy: always #cannot use if-not-present with a shared runner
+  variables:
+    LOCAL_DEPLOY: "true" #deploy locally
+    DOCKER_HOST: unix:///var/run/docker.sock #sets DOCKER_HOST var as the host's docker daemon via socket mount
+    KUBE_NAMESPACE: ${KUBE_NAMESPACE:-default} #default to 'default' namespace if not set in Gitlab CI/CD variables
+    REGISTRY_PULL_TARGET: "${DOCKER_PUSH_TARGET}" #defaults to where the image was pushed to in the build
+  rules: 
+    - if: '$REMOTE_DEPLOY != "true" && $CI_COMMIT_BRANCH == "main"'
+      when: on_success
+    - when: never
+      #this tells ci to only run this job if LOCAL_DEPLOY variable is set to true in the .env file (or in gitlab cicd variables)
+  needs:
+    - job: build_docker_image #gives access to build job artifacts like deploy.env
+      artifacts: true #for getting deploy.env
+  before_script:
+    - echo "Starting deploy_local job..."
+     #mount the socket for the host docker daemon
+    - echo "Mounting host docker daemon..."
+    - unset DOCKER_HOST
+    - export DOCKER_HOST="unix:///var/run/docker.sock"
+    - echo "Using host docker daemon:$DOCKER_HOST"
+    #install Docker CLI
+    - echo "Installing Docker CLI inide job container..."
+    - apt-get update -qq && apt-get install -y -qq docker-cli
+    #verify minikube-in-docker-local visibility from this job container
+    - echo "Checking if job container can see minikube-in-docker-local container..."
+    - docker ps -a | grep minikube-in-docker-local
+    - echo "Inspecting minikube-in-docker-local container ports..."
+    - docker inspect -f '{{json .NetworkSettings.Ports}}' minikube-in-docker-local
+    - echo "Extract host-mapped port for 8443:"
+    - docker inspect -f '{{(index (index .NetworkSettings.Ports "8443/tcp") 0).HostPort}}' minikube-in-docker-local
+    - export MINIKUBE_HOST_PORT=$(docker inspect -f '{{(index (index .NetworkSettings.Ports "8443/tcp") 0).HostPort}}' minikube-in-docker-local)
+    - echo "Detected minikube-in-docker-local host port:$MINIKUBE_HOST_PORT"
+    #verify present working directory
+    - echo "Project directory:$CI_PROJECT_DIR"
+    - cd "$CI_PROJECT_DIR"
+    #load the deploy.env artifact variables
+    - echo "Loading deploy.env artifact variables..."
+    - |
+      if [ -f deploy.env ]; then
+      echo "deploy.env found. Contents:"
+      cat deploy.env
+      export $(grep -v '^#\|^$' deploy.env | xargs)
+      else
+      echo "ERROR: deploy.env artifact missing!"
+      exit 1
+      fi 
+    - echo "Loaded registry image:$REGISTRY_IMAGE_NAME"
+    - REGISTRY_PULL_TARGET="${REGISTRY_PULL_TARGET:-gitlab-local}"
+    - echo "Deploying from registry:$REGISTRY_PULL_TARGET"
+    #MAKE REGISTRY LOGIN AND PULL LOGIC DYNAMIC...
+    - |
+      REGISTRY_PULL_TARGET="${REGISTRY_PULL_TARGET:-gitlab-local}"
+      echo "Deploying from registry:$REGISTRY_PULL_TARGET"
+      if [ "$REGISTRY_PULL_TARGET" = "gitlab-local" ]; then
+      DEPLOY_IMAGE="${REGISTRY_IMAGE_NAME}"
+      export DEPLOY_IMAGE
+      echo "Using local Gitlab registry:$DEPLOY_IMAGE"
+      echo "Logging into local Gitlab registry (though you really don't)..."
+      elif [ "$REGISTRY_PULL_TARGET" = "gitlab-public" ]; then
+      DEPLOY_IMAGE="${REGISTRY_IMAGE_NAME}"
+      export DEPLOY_IMAGE
+      echo "Logging into Gitlab public registry..."
+      "$GITLAB_PAT" | docker login registry.gitlab.com -u "$GITLAB_USERNAME" --password-stdin
+      elif [ "$REGISTRY_PULL_TARGET" = "github" ]; then
+      DEPLOY_IMAGE="${REGISTRY_IMAGE_NAME}"
+      export DEPLOY_IMAGE
+      echo "Logging into Github Container Registry..."
+      echo "$GITHUB_PAT" | docker login ghcr.io -u "$GITHUB_USERNAME" --password-stdin
+      else
+      DEPLOY_IMAGE="${REGISTRY_IMAGE_NAME}"
+      export DEPLOY_IMAGE
+      echo "Logging into Docker Hub..."
+      echo "DOCKER_HUB_PAT" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
+      fi
+
+  script:
+    - echo "Pulling image from $REGISTRY_PULL_TARGET registry:$DEPLOY_IMAGE"
+    - docker pull "$DEPLOY_IMAGE"
+    #pull image from local registry using dynamic ip
+    #needed because host.docker.internal doesn't resolve correctly since this job container is inside the runner which is in a docker container which uses a vm layer which it resolves to
+    #REVERT: - LOCAL_REGISTRY_IMAGE="host.docker.internal:8930/${REGISTRY_IMAGE_NAME#*/}"
+    #REVERT: - echo "Pulling image from local registry:$LOCAL_REGISTRY_IMAGE"
+    #REVERT: - docker pull "$LOCAL_REGISTRY_IMAGE"
+    #patch the kubeconfig_flat.yml
+    - echo "Fetching kubeconfig_flat.yml from Secrets Manager..."
+    - aws secretsmanager get-secret-value --secret-id "minikube-in-docker-local/kubeconfig_flat" --query "SecretString" --output text > kubeconfig_flat.yml
+    - export KUBECONFIG="$CI_PROJECT_DIR/kubeconfig_flat.yml"
+    - echo "KUBECONFIG is set to:$KUBECONFIG"
+    - echo "Patching minikube-in-docker-local server URL dynamically..."
+    - kubectl config set-cluster minikube-in-docker-local --server="https://host.docker.internal:$MINIKUBE_HOST_PORT" --kubeconfig="$KUBECONFIG"
+    - kubectl config use-context minikube-in-docker-local --kubeconfig="$KUBECONFIG"
+    - echo "Verifying kubectl can read kubeconfig..."
+    - kubectl config view --kubeconfig="$KUBECONFIG"
+    #testing connectivity to minikube-in-docker-local
+    - echo "Testing connectivity to minikube-in-docker-local cluster..."
+    - kubectl cluster-info
+    - kubectl get nodes
+    - kubectl get pods --kubeconfig="$KUBECONFIG"
+    #- echo "Use envsubst to substitute envars in the k8s deployment yml before applying it with kubectl..."
+    #- echo "Using envsubst allows dynamic setting of image name and tag per the k8s deployments yml..."
+    - echo "Using envsubst to substitute envars (name and tag) in the k8s deployment yml before applying it with kubectl..."
+    - echo "Deploying app to minikube cluster..."
+    - echo "Loading deploy.env artifact..."
+    - export $(grep -v '^#|^$' deploy.env | xargs)
+    #REVERT: - DEPLOY_IMAGE="$LOCAL_REGISTRY_IMAGE" envsubst < k8s/flask-app-template_k8s-deployment.yml > rendered-deployment.yml
+    - echo "DEPLOY_IMAGE=$DEPLOY_IMAGE" #debug
+    - echo "Deploying image $DEPLOY_IMAGE to Kubernetes..."
+    - export DEPLOY_IMAGE
+    - envsubst < k8s/flask-app-template_k8s-deployment.yml > rendered-deployment.yml
+    - kubectl get pods --all-namespaces --kubeconfig="$KUBECONFIG"
+    - cat rendered-deployment.yml
+    - kubectl apply -f rendered-deployment.yml
+    #COULD ADD FUNCTIONAL TESTS HERE using kubectl wait for available, run tests and fail the job is tests fail
+    - echo "Access app in web browser by running:'minikube -p minikube-in-docker-local service flask-app-template-service --url' from host and going to output address"
+  
+  after_script:
+    - echo "deploy_local job complete."
+    - echo "Local deployment will persist until stopped manually"
+    #to remove the temp Dockerfile with hash used for this job
+    #- rm -f Dockerfile.tmp || true
+    #DO NOT delete host minikube or containers"
+
+deploy_remote: 
+  stage: deploy
+  image: 
+    name: heyvaldemar/aws-kubectl:latest #has kubectl and awscli2
+    #not using docker:24.0.5-cli-alpine3.18 and then apk adding things and curling kubectl
+    #can't use lachlanevenson/k8s-kubectl:latest bc though it has kubectl and git pre-installed, it doesn't have docker to mount the docker daemon from
+    entrypoint: [""]  #allow shell commands by overriding the default entrypoint for the kubectl image 
+  variables:
+    REMOTE_DEPLOY: "${REMOTE_DEPLOY:-false}" #default to false and override with CI/CD variable if needed
+    KUBE_NAMESPACE: ${KUBE_NAMESPACE:-default} #default to 'default' namespace if not set in Gitlab CI/CD variables
+    REMOTE_CLUSTER_NAME: "${CI_PROJECT_NAME}-remote-deploy-poc-${CI_PIPELINE_ID}" #name of the remote EKS cluster to be created for this deploy
+    KUBECONFIG: "/tmp/kubeconfig-${CI_PIPELINE_ID}" #path to kubeconfig file for this job
+  rules:
+    - if: '$REMOTE_DEPLOY == "true" && $CI_COMMIT_BRANCH == "main"'
+      when: manual #manual trigger for remote deploys to avoid accidental deploys
+    - when: never #never run this job unless manually triggered
+  allow_failure: true #do not fail the pipeline if remote deploy fails
+  needs:
+    - job: build_docker_image #gives access to build job artifacts like deploy.env
+      artifacts: true
+  dependencies: 
+    - build_docker_image #specifies that this job depends on the build_docker_image job to get its artifacts
+  before_script:
+    - echo "Setting up environment for remote Kubernetes deployment..."
+    - apt-get update -qq && apt-get install -y curl bash gettext
+    - curl --version #verify curl installation
+    - bash --version #verify bash installation
+    - gettext --version #verify gettext installation
+    #install eksctl
+    - echo "Installing eksctl..."
+    - curl -sL "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" -o eksctl_Linux_amd64.tar.gz
+    #verify checksums
+    - echo "Verifying eksctl checksums..."
+    - curl -sL "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_checksums.txt" -o eksctl_checksums.txt
+    - grep eksctl_Linux_amd64.tar.gz eksctl_checksums.txt | sha256sum -c -
+    #extract eksctl
+    - echo "Extracting eksctl..."
+    - tar -xzf eksctl_Linux_amd64.tar.gz -C /usr/local/bin/
+    - chmod +x /usr/local/bin/eksctl
+    - eksctl version
+    #authenticate to k8s cluster (EKS)
+    - echo "Configuring access to remote EKS cluster..."
+    - export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}"
+    - export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}"
+    - export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION}"
+    #create EKS cluster which autogenerates a kubeconfig in this job container
+    - echo "Creating EKS cluster for deployment..."
+    - REMOTE_CLUSTER_NAME="${CI_PROJECT_NAME}-remote-deploy-poc-${CI_PIPELINE_ID}"
+    - export REMOTE_CLUSTER_NAME="${CI_PROJECT_NAME}-remote-deploy-poc-${CI_PIPELINE_ID}"
+    - echo "EKS Cluster Name:$REMOTE_CLUSTER_NAME"
+    - eksctl create cluster --name "$REMOTE_CLUSTER_NAME" --region "$AWS_DEFAULT_REGION" --nodes 1 --nodes-min 1 --nodes-max 1 --node-type t3.small --managed
+    - echo "EKS cluster $REMOTE_CLUSTER_NAME created."
+    #verify kubeconfig file created by eksctl
+    - eksctl utils write-kubeconfig --cluster "$REMOTE_CLUSTER_NAME" --region "$AWS_DEFAULT_REGION"
+    #export generated kubeconfig to be used by kubectl in this job
+    - export KUBECONFIG="$(pwd)/remote_deploy_kubeconfig.yml" 
+    - eksctl utils write-kubeconfig --cluster "$REMOTE_CLUSTER_NAME" --region "$AWS_DEFAULT_REGION"
+    #create Kubernetes Secret from CI variables
+    - echo "Creating Kubernetes Secret for deployment..."
+    - REMOTE_DEPLOY_SECRET_NAME="${CI_PROJECT_NAME}-remote-deploy-${CI_PIPELINE_ID}-secret"
+    - kubectl create secret generic $REMOTE_DEPLOY_SECRET_NAME  --from-literal=APP_PASSWORD="$APP_PASSWORD" --from-literal=API_KEY="$API_KEY" --dry-run=client -o yaml | kubectl apply -f -
+    - echo "Kubernetes Secret $REMOTE_DEPLOY_SECRET_NAME created."
+    #verify kubectl connectivity to remote cluster
+    - echo "Verifying kubectl connectivity to remote EKS cluster..."
+    - kubectl cluster-info
+    - kubectl get nodes
+    - kubectl get pods --all-namespaces
+    #load variables from ci.variables file using a multiline to ensure the persist through job
+    - echo "Loading ci.variables file variables..."
+    - |
+      set -a
+      [ -f ci.variables ] && source ci.variables
+      set +a
+  script:
+    #load the deploy.env artifact
+    - echo "Current directory:" $(pwd) #print the working directory
+    - export $(cat deploy.env | xargs) #load variables from deploy.env artifact
+    - echo "deploy.env contents:"
+    - cat deploy.env
+    #set REMOTE_PULL_TARGET with fallback to tight coupling with REGISTRY_PUSH_TARGET from deploy.env if not set
+    - REMOTE_PULL_TARGET=${REMOTE_PULL_TARGET:-${DOCKER_PUSH_TARGET:-gitlab-local}}
+    - export REMOTE_PULL_TARGET
+    - echo "REMOTE_PULL_TARGET is set to:$REMOTE_PULL_TARGET"
+    #dynamic login to registry based on REMOTE_PULL_TARGET variable set in Gitlab CI/CD variables
+    #create imagePullSecret for target registry and save it to temp file
+    - REMOTE_DEPLOY_IMAGE_PULL_SECRET=${REMOTE_DEPLOY_IMAGE_PULL_SECRET:-target-registry-secret}
+    - |
+      TMP_VARS_FILE=$(pwd)/remote_deploy_vars.sh
+      if [ "$REMOTE_PULL_TARGET" = "gitlab-public" ]; then
+      DEPLOY_IMAGE="${REGISTRY_IMAGE_NAME}"
+      export DEPLOY_IMAGE
+      echo "Creating imagePullSecret for Gitlab Public Container Registry..."
+      kubectl create secret docker-registry $REMOTE_DEPLOY_IMAGE_PULL_SECRET --docker-server=registry.gitlab.com --docker-username="$GITLAB_PUBLIC_USERNAME" --docker-password="$GITLAB_PUBLIC_PAT" --dry-run=client -o yaml | kubectl apply -f -
+      elif [ "$REMOTE_PULL_TARGET" = "github" ]; then
+      DEPLOY_IMAGE="${REGISTRY_IMAGE_NAME}"
+      export DEPLOY_IMAGE
+      echo "Creating imagePullSecret for Github Container Registry..."
+      kubectl create secret docker-registry $REMOTE_DEPLOY_IMAGE_PULL_SECRET --docker-server=ghcr.io --docker-username="$GITHUB_USERNAME" --docker-password="$GITHUB_PAT" --dry-run=client -o yaml | kubectl apply -f -
+      else
+      DEPLOY_IMAGE="${REGISTRY_IMAGE_NAME}"
+      export DEPLOY_IMAGE
+      echo "Creating imagePullSecret for Docker Hub..."
+      kubectl create secret docker-registry $REMOTE_DEPLOY_IMAGE_PULL_SECRET --docker-server=https://index.docker.io/v1/ --docker-username="$DOCKER_HUB_USERNAME" --docker-password="$DOCKER_HUB_PAT" --dry-run=client -o yaml | kubectl apply -f -
+      fi
+    - echo "export REMOTE_DEPLOY_IMAGE_PULL_SECRET=${REMOTE_DEPLOY_IMAGE_PULL_SECRET}" >> "$TMP_VARS_FILE"
+    #source the imagePullSecret from the temp vars file
+    - set -a
+    - source "$TMP_VARS_FILE"
+    - set +a
+    #pull built image from REMOTE_PULL_TARGET registry
+    - echo "Pulling image $DEPLOY_IMAGE from $REMOTE_PULL_TARGET registry"
+    #ensure the deploy image is set for envsubst
+    - echo "DEPLOY_IMAGE=$DEPLOY_IMAGE" #debug
+    - echo "Deploying image $DEPLOY_IMAGE to Kubernetes..."
+    - export DEPLOY_IMAGE
+    #ensure the secret name is set for envsubst
+    - REMOTE_DEPLOY_IMAGE_PULL_SECRET=${REMOTE_DEPLOY_IMAGE_PULL_SECRET:-target-registry-secret}
+    - |
+      if [ -z "$REMOTE_DEPLOY_IMAGE_PULL_SECRET" ]; then
+      echo "REMOTE_DEPLOY_IMAGE_PULL_SECRET is empty"
+      exit 1
+      fi
+    #deploy to eks using kubectl and envsubst
+    - envsubst < k8s/flask-app-template_k8s-deployment-remote.yml > rendered-deployment.yml
+    - kubectl get pods --all-namespaces --kubeconfig="$KUBECONFIG"
+    - cat rendered-deployment.yml
+    - kubectl apply -f rendered-deployment.yml --kubeconfig="$KUBECONFIG"
+     #COULD ADD FUNCTIONAL TESTS HERE using kubectl wait for available, run tests and fail the job is tests fail
+    #debug
+    - kubectl get secrets -n default --kubeconfig="$KUBECONFIG"
+    - kubectl get pods -n default --kubeconfig="$KUBECONFIG"
+    - kubectl describe deployment flask-app-template -n default --kubeconfig="$KUBECONFIG"
+    - kubectl describe pods -n default --kubeconfig="$KUBECONFIG"
+    - grep -v 'token\|certificate-authority-data\|client-certificate-data\|client-key-data' "$KUBECONFIG" || true
+    #DEBUG ONLY: the following line prints the ImagePullSecret - NEVER RUN IT IN REAL DEPLOYMENTS (commented out as default)
+    #- kubectl get secret "$REMOTE_DEPLOY_IMAGE_PULL_SECRET" -n default --kubeconfig="$KUBECONFIG" -o yaml
+    - kubectl get deployment flask-app-template -n default --kubeconfig="$KUBECONFIG" -o yaml | grep imagePullSecrets -A 2
+    #write artifact file to be used by cleanup job
+    - echo "REMOTE_CLUSTER_NAME=$REMOTE_CLUSTER_NAME" > remote_deploy.env
+  artifacts:
+    name: "remote_deploy_artifact_${CI_PIPELINE_ID}"
+    paths:
+      - remote_deploy.env
+    #expire_in: 1 day
+  after_script:
+    - echo "Remote deploy job succeeded..."
+    - echo "Remote cluster is running."
+    - echo "⚠️Remember to manually clean up cluster and resources when done.💸"
+    #wait for the service to be up
+    - echo "Waiting for deployed service to be accessible..."
+    - i=0; until SERVICE_NAME=$(kubectl get service -n default -l app=flask-app-template -o jsonpath='{.items[0].metadata.name}') || true && [ -n "$SERVICE_NAME" ]; do echo "Service not yet available. Waiting..."; sleep 5; i=$((i+1)); [ $i -ge 120 ] && echo "Timeout waiting for service" && exit 1; done
+    - kubectl get endpoints "$SERVICE_NAME"
+    - kubectl describe svc "$SERVICE_NAME"
+    #wait for LoadBalancer IP to be ready
+    - echo "Waiting for LoadBalancer external address..."
+    - echo "Waiting for LoadBalancer (max 10 minutes)"
+    - for i in {1..20}; do EXTERNAL_IP=$(kubectl get svc "$SERVICE_NAME" -n default -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || true); EXTERNAL_HOSTNAME=$(kubectl get svc "$SERVICE_NAME" -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true); [ -n "$EXTERNAL_IP$EXTERNAL_HOSTNAME" ] && break; echo "LoadBalancer not ready yet. Still waiting..."; sleep 30; done
+    - '[ -z "$EXTERNAL_IP$EXTERNAL_HOSTNAME" ] && echo "LoadBalancer never became ready"'
+    #extract LoadBalancer external IP and external hostname
+    - echo "EXTERNAL_IP=$EXTERNAL_IP"
+    - echo "EXTERNAL_HOSTNAME=$EXTERNAL_HOSTNAME"
+    #print external access url
+    - test -n "$EXTERNAL_IP" && echo "Access service at:http://$EXTERNAL_IP"
+    - test -z "$EXTERNAL_IP" && test -n "$EXTERNAL_HOSTNAME" && echo "Access service at:http://$EXTERNAL_HOSTNAME"
+   
+#cleanup remote deployment
+cleanup_deploy_remote:
+  stage: deploy
+  image: 
+    name: heyvaldemar/aws-kubectl:latest #has kubectl and awscli2
+    entrypoint: [""]  #allow shell commands by overriding the default entrypoint for the kubectl image
+  variables:
+    KUBE_NAMESPACE: ${KUBE_NAMESPACE:-default} #default to 'default' namespace if not set in Gitlab CI/CD variables
+  rules:
+    - if: '$REMOTE_DEPLOY == "true" && $CI_COMMIT_BRANCH == "main"'
+      when: manual #manual trigger for remote cleanup to avoid accidental deletions
+      allow_failure: true #do not fail the pipeline if cleanup fails
+    - when: never #never run this job unless manually triggered
+  needs:
+    - job: deploy_remote
+      optional: true #make the dependency optional to avoid blocking if deploy_remote not run
+      artifacts: true
+  before_script:
+    - echo "Setting up environment for remote deployment cleanup..."
+    - source remote_deploy.env
+    - echo "Name of EKS Cluster to be deleted:$REMOTE_CLUSTER_NAME"
+    #install curl and bash to job container
+    - apt-get update -qq && apt-get install -y curl bash
+    - curl --version #verify curl installation
+    - bash --version #verify bash installation
+    #install ekctl to job container
+    - echo "Installing eksctl..."
+    - curl -sL "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" -o eksctl_Linux_amd64.tar.gz
+    #verify checksums
+    - echo "Verifying eksctl checksums..."
+    - curl -sL "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_checksums.txt" -o eksctl_checksums.txt
+    - grep eksctl_Linux_amd64.tar.gz eksctl_checksums.txt | sha256sum -c -
+    #extract eksctl
+    - echo "Extracting eksctl..."
+    - tar -xzf eksctl_Linux_amd64.tar.gz -C /usr/local/bin/
+    - chmod +x /usr/local/bin/eksctl
+    #verify installations
+    - eksctl version || echo "eksctl not found"
+    - kubectl version || echo "kubectl not found"
+    - aws --version || echo "awscli2 not found"
+    #authenticate to k8s cluster (EKS)
+    - echo "Configuring access to remote EKS cluster..."
+    - export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}"
+    - export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}"
+    - export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION}"
+  script:
+    - echo "Cleaning up remote deployment..."
+    #delete the EKS cluster created for the remote deployment
+    - echo "Deleting EKS cluster:$REMOTE_CLUSTER_NAME"
+    - eksctl delete cluster --name "$REMOTE_CLUSTER_NAME" --region "$AWS_DEFAULT_REGION" --wait
+    #verify deletion of all resources
+    - echo "Verifying deletion of EKS cluster resources..."
+    - aws eks list-clusters --region "$AWS_DEFAULT_REGION"
+    - aws cloudformation list-stacks --region "$AWS_DEFAULT_REGION" --stack-status-filter CREATE_IN_PROGRESS UPDATE_IN_PROGRESS UPDATE_COMPLETE_CLEANUP_IN_PROGRESS DELETE_IN_PROGRESS
+    #for describe-nat-gateways it is filter, not filters for some reason
+    - aws ec2 describe-nat-gateways --filter "Name=tag:Name,Values=eksctl-*" --query 'NatGateways[].State'
+    - aws ec2 describe-vpcs --filters "Name=tag:Name,Values=eksctl-*"
+    - aws ec2 describe-subnets --filters "Name=tag:Name,Values=eksctl-*"
+    - aws ec2 describe-route-tables --filters "Name=tag:Name,Values=eksctl-*"
+    - aws ec2 describe-internet-gateways --filters "Name=tag:Name,Values=eksctl-*"
+    - aws ec2 describe-security-groups --filters "Name=tag:Name,Values=eksctl-*"
+    - aws ec2 describe-instances --filters "Name=tag:Name,Values=eksctl-*"
+    - aws elb describe-load-balancers --region "$AWS_DEFAULT_REGION"
+    - aws elbv2 describe-load-balancers --region "$AWS_DEFAULT_REGION"
+  after_script:
+    #delete local artifiacts from the job (optional)
+    - rm -f rendered-deployment.yml || true
+    - echo "Remote deployment cleanup complete."

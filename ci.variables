@@ -1,0 +1,14 @@
+#this file is committed intentionally
+#this file contains non-secret variables used in the cicd pipeline
+#options for DOCKER_PUSH_TARGET are: gitlab-local, gitlab-public, github, docker
+#options for REMOTE_PULL_TARGET are: gitlab-public, github, docker
+#REMOTE_DEPLOY is overriden using the CICD variable setting for it and setting it to true
+#DOCKER_PUSH_TARGET and REMOTE_PULL_TARGET can be overriden by setting them using CICD variables
+
+# ---- deployment mode defaults ----
+LOCAL_DEPLOY=true
+REMOTE_DEPLOY=false
+
+# ---- registry selection defaults (optional: override using CICD variables) ----
+DOCKER_PUSH_TARGET=gitlab-local 
+REMOTE_PULL_TARGET=github

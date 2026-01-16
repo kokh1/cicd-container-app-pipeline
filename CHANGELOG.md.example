@@ -1,0 +1,4 @@
+#this is an example version of the CHANGELOG.md file
+#this file is written to by running the changelog.py helper script locally
+#from the project directory, run: python3 changelog.py
+#CHANGELOG.md will update with the timestamp, commit SHA and commit message of the latest commit
