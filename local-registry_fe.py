@@ -40,11 +40,11 @@ REGISTRY_BASE = "http://localhost:8930/v2/" #local registry
 REGISTRY_CATALOG = REGISTRY_BASE + "_catalog"
 
 GITLAB_API_URL = "http://localhost:8929/api/v4" #only for DELETE
-GITLAB_TOKEN_1 = os.getenv("GITLAB_TOKEN_1") #this is the project-speicifc token saved in the .env of the ~/gitlab directory
+GITLAB_TOKEN_1 = os.getenv("GITLAB_TOKEN_1") #this is the project-speicifc token saved in the .env of the ~/docker/gitlab/project1 directory
 PROJECT_ID = 2 #project id as shown in gitlab instance
 
 #fetch repositories from registry
-#note: this fetches from the registry directly, not the gitlab api
+#note: this fetches from the local registry directly, not the gitlab api
 def fetch_repositories():
     try:
         resp = requests.get(REGISTRY_CATALOG)
@@ -72,8 +72,8 @@ def get_registry_repo_map():
 #fetch tags for a repository
 def fetch_tags(repo_name):
     """
-    Fetch tags directly from the Docker/OCI registry.
-    Returns list of tag names. No size/reated_at is available here.
+    Fetch tags directly from the local Docker/OCI registry.
+    Returns list of tag names. No size/created_at is available here.
     """
     url = f"http://localhost:8930/v2/{repo_name}/tags/list"
     try:
@@ -216,7 +216,7 @@ for repo in repositories:
                 st.session_state.images_to_delete.remove(image_key)
   
 #add delete button
-#Requires: GITLAB_TOKEN_1 exported to vennv and PROJECT_ID is correct
+#Requires: GITLAB_TOKEN_1 exported to venv and PROJECT_ID is correct
 
 # Button to delete selected images
 st.write("---")
