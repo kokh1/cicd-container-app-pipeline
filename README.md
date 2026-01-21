@@ -134,8 +134,8 @@ Follow these steps carefully. Certain config edits are required for the project 
 It is important that you do the following in the order presented. 
 1. Directory and Docker Compose Files
 + Create a directory for your Gitlab-related components:
-  + mkdir -p /Users/<user>/docker/gitlab/project1  
-  + cd /Users/<user>/docker/gitlab/project1
+  + mkdir -p `/Users/<user>/docker/gitlab/project1`  
+  + cd `/Users/<user>/docker/gitlab/project1`
 + Once made, create the following Docker Compose files in this directory:
     + docker-compose.yml -> GitLab CE
         + 🐳⚠️ The first time you create this Docker Compose file, Docker auto-creates volumes for config, logs and data. It automatically prepends the name of the directory the Compose file exists in. In the service definition, the volumes block shows the volumes prepended with: gitlab_ but for initial creation you should NOT prepend gitlab_. Likewise, the bottom volumes section has external: true for each volume which you should NOT have for initial creation. The prepending and external: true are necessary only after initial creation if you want to force Docker to use the existing config, data and logs as named volumes (ex usecase: when then path to the project has changed). 
@@ -266,14 +266,14 @@ There are two main .env files used in this project (these are predominantly VEST
       + Deploy-related variables for local testing or other resources
 
   + 1.2 **gitlab/project1 directory .env**
-      + Presumed path to this directory: Users/<user>/docker/gitlab/project1 as this set up assumes each of the Gitlab-related containers (gitlab, runner, local registry) are Dockerized 
+      + Presumed path to this directory: `Users/<user>/docker/gitlab/project1` as this set up assumes each of the Gitlab-related containers (gitlab, runner, local registry) are Dockerized 
       + Contains secrets for GitLab Runner, local registry, and GitLab-specific secrets
       + Use the .env.example for the gitlab directory for reference; do not commit real secrets
       + Note:
           + CI_SERVER_URL should match hostname of the Gitlab CE instance (http://gitlab/) inside the local Docker network (gitlab-network). 
           + Suggested: Generate and copy any required tokens from the Gitlab CE GUI into the .env
           + the gitlab-runner container's base image is specified in the Dockerfile.gitlab-runner Compose file located in the gitlab/project1 directory (.example version is provided). It uses the official gitlab/gitlab-runner:alpine image as its base image. 
-          + See the ***gitlab*** repo for the example gitab/project1 directory setup at /Users/<user>/docker/gitlab/project1
+          + See the ***gitlab*** repo for the example gitab/project1 directory setup at `/Users/<user>/docker/gitlab/project1`
 2. Variables in GitLab CE
 + Purpose: 
     + Variables set in the GitLab project GUI that the CI/CD pipeline can access at runtime
@@ -350,7 +350,7 @@ There are two main .env files used in this project (these are predominantly VEST
 RUNNER REGISTRATION
 The GitLab Runner is required to execute the pipeline jobs (build, test, deploy_local/deploy_remote). This runner runs in a Docker container on the local Docker network (gitlab-network) and communicates with the local GitLab CE instance. 
 1. Navigate to the gitlab directory:
-cd /Users/<user>/docker/gitlab/project1
+  + cd `/Users/<user>/docker/gitlab/project1`
 and ensure the docker-compose.runner.yml exists. 
 + This yml file defines a custom GitLab runner container image (gitlab-runner-custom:latest) using Dockerfile.gitlab-runner (which is found in the same directory) extends the official gitlab/gitlab-runner:alpine base image to include:
     + Docker CLI (required to build and push images from pipeline jobs)
@@ -361,7 +361,7 @@ and ensure the docker-compose.runner.yml exists.
 docker-compose -f docker-compose.runner.yml down
 This prevents conflicts and ensures registration writes the config cleanly. 
 3. Register the runner:
-    gitlab-runner register --non-interactive --url http://gitlab/ --registration-token <YourRunnerRegistrationToken> --executor docker --docker-image docker:latest --description "gitlab-runner"
+    + gitlab-runner register --non-interactive --url http://gitlab/ --registration-token `<YourRunnerRegistrationToken>` --executor docker --docker-image docker:latest --description "gitlab-runner"
     + Most secretes and takens are already defined in the .env files (see SECRETS & ENV FILES section of this document)
     + The URL http://gitlab/ must match the internal Docker network, not localhost because localhost is self-referential from inside a container. 
     + docker:latest is used the default image for jobs that don't specify one. 
@@ -402,7 +402,7 @@ Once online, the runner can execute build, test, and local deploy jobs.
 DOCKER DAEMON: INSECURE REGISTRIES
 Docker Desktop on macOS uses a VM (virtual machine) layer, so pushing/pulling to a local registry over HTTP (insecure) requires explicit permission. This ensure your GitLab Runner and Minikube can access the local registry without TLS errors. 
 1. Before modifying Docker's configuration, stop all running containers:
-    + cd /Users/<user>/docker/gitlab
+    + cd `/Users/<user>/docker/gitlab`
     + docker-compose -f docker-compose.runner.registry.yml down
     + docker-compose -f docker-compose.runner.yml down
     + docker-compose -f docker-composer.yml down
@@ -451,8 +451,8 @@ Minikube is required to deploy the app from the CI/CD pipeline using the local K
 All detailed instructions and helper scripts live in a separate directory/directories (see https://github.com/kokh1/cicd-container-app-pipeline-minikube-setup). 
 ⚠️ You need to be cautious with this directory as it will (temporarily) contain files containing secrets. Ensure you do not commit files containing secrets. 
 + From your host terminal, if it doesn't already exist, create and enter the minikube-setup directory:
-  + mkdir -p /Users/<user>/minikube-setup
-  + cd /Users/<user>/minikube-setup
+  + mkdir -p `/Users/<user>/minikube-setup`
+  + cd `/Users/<user>/minikube-setup`
 + Copy or clone files (no files with secrets) from the minikube-setup repository into the minikube-setup directory.
 + Key files: 
     + configure_minikube-in-docker-local.MD
@@ -492,7 +492,7 @@ FLATTEN KUBECONFIG
 The pipeline's deploy jobs rely on a flattened kubeconfig, which consolidates certificates and replaces dynamic values with single-line base-64 encoded entries. This allows the deploy job to communicate with the Minikube cluster. 
 1. Prerequisities
 + Ensure the Minikube profile minikube-in-docker-local is correctly configured and running.
-+ The minikube-setup directory at Users/<user>/minikube-setup must exist with the following files (see https://github.com/kokh1/cicd-container-app-pipeline-minikube-setup):
++ The minikube-setup directory at `Users/<user>/minikube-setup` must exist with the following files (see https://github.com/kokh1/cicd-container-app-pipeline-minikube-setup):
     + configure-minikube-in-docker-local.MD -> step-by-step guide to configure minikube-in-docker-local profile/cluster (for local deployment workflow)
     + before-flattening.MD -> step-by-step guide to prepare to flatten the kubeconfig
     + flatten_kubeconfig.sh -> script that flattens kubeconfig for use in CI/CD
@@ -510,10 +510,10 @@ chmod 600 kube-clinet.key.pem
 chmod 644 kube-ca.pem kube-client.crt.pem
 3. Run flatten-kubeconfig.sh script
 From your host terminal:
-cd Users/<user>/minikube-setup
+cd `Users/<user>/minikube-setup`
 bash ./flatten_kubeconfig.sh
 + This script validates PEMs, converts them to single-line base64, patches the kubeconfig template and produces:
-/Users/<user>/minikube-setup/kubeconfig_flat.yml
+  + `/Users/<user>/minikube-setup/kubeconfig_flat.yml`
 + ⚠️ The flattened kubeconfig must be uploaded to Secrets Manager for use in CI/CD Kuberenetes deploy jobs.
 + If the script runs successfully, you should see:
 ✅ kubeconfig flattened successfully
@@ -588,8 +588,8 @@ EKS.
 6. Triggering the Pipeline
 + Enter the runner container with the project directory mounted:
 docker exec -it gitlab-runner /bin/bash
-cd /builds/<my-project>
-  + In this case, replace <my-project> with flask-app-template but this would be whatever the project directory is called locally
+cd `/builds/<my-project>`
+  + In this case, replace `<my-project>` with flask-app-template but this would be whatever the project directory is called locally
 gitlab push gitlab main
   + gitlab is the dedicated local remote used for this project for local development (but Git should be managed as desired). The setup assumes git is used to push. 
 7. Notes
@@ -654,7 +654,7 @@ TROUBELSHOOTING/TIPS
     + You can interact with the containers using docker exec commands or attach to its processes, but there is no direct pathway for tools running inside containers to access services running directly on the host and vice versa. 
     + For example, any communication between containerzed services and the host typically requires port-forwarding or commands to retireve endpoints. (For example, the host cannot automatically discover URLs of containerized services. See the deploy_local workflow for workaround.)
     + Also, some port ranges may be restricted because Docker limits the VM's available IP/port mapping mapping range. 
-+ 🚨 Inside a Docker container, localhost refers only to the container itself. To access services running on your host machine or in other Docker containers from within a container, use: host.docker.internal:<port> instead of localhost:<port>
++ 🚨 Inside a Docker container, localhost refers only to the container itself. To access services running on your host machine or in other Docker containers from within a container, use: `host.docker.internal:<port>` instead of `localhost:<port>`
 + 🐳 No DIND (Docker-in-Docker) used in this project, only DOD (Docker-Outside-Docker).
 + 🏃🏻‍♀️ If you change the Runner config, you have to reregister the runner with Gitlab (or whatever CI/CD tool you use)
 + #️⃣ DO NOT put comment lines in the config.toml (for the Runner)
