@@ -1,7 +1,8 @@
 #this is a script to automate updating of the changelog
-#this script needs to exist in the same directory where git initialized so it access the git logs
-#this script writes to a file named CHANGELOG.md so that file must exist for it run properly
+#this script needs to exist in the same directory where git initialized so it can access the git log
+#this script writes to CHANGELOG.md (unless you set CHANGELOG_FILE to use another file) so ensure it exists
 #recommended to run in a Python virtual environnment
+#this intended to be run locally after a successful pipeline run to stimulate production
 #to run: python3 changelog.py
 
 #import the needed libraries
@@ -22,8 +23,15 @@ timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 #entry format for the changelog
 changelog_entry = f" ## {timestamp} - {commit_sha}\n\- {commit_message}\n\n"
 
-#write to the changelog file
-with open(CHANGELOG_FILE, 'a') as changelog_file: 
-    changelog_file.write(changelog_entry) 
+#read existing content (if file exists)
+if os.path.exists(CHANGELOG_FILE):
+    with open(CHANGELOG_FILE, 'r') as f:
+        previous_entries = f.read()
+else:
+    previous_entries = ''
+
+#append new entry at top of file
+with open (CHANGELOG_FILE, 'w') as f: 
+    f.write(changelog_entry + previous_entries)
 
 print (f"Changelog updated: {changelog_entry}")
