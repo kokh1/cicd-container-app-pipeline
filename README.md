@@ -273,7 +273,7 @@ There are two main .env files used in this project (these are predominantly VEST
           + CI_SERVER_URL should match hostname of the Gitlab CE instance (http://gitlab/) inside the local Docker network (gitlab-network). 
           + Suggested: Generate and copy any required tokens from the Gitlab CE GUI into the .env
           + the gitlab-runner container's base image is specified in the Dockerfile.gitlab-runner Compose file located in the gitlab/project1 directory (.example version is provided). It uses the official gitlab/gitlab-runner:alpine image as its base image. 
-          + See the ***gitlab*** repo for the example gitab/project1 directory setup at `/Users/<user>/docker/gitlab/project1`
+          + See the https://github.com/kokh1/cicd-container-app-pipeline-ci-env repo for the example directory setup for `/Users/<user>/docker/gitlab/project1`
 2. Variables in GitLab CE
 + Purpose: 
     + Variables set in the GitLab project GUI that the CI/CD pipeline can access at runtime
