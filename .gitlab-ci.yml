@@ -197,25 +197,27 @@ run_tests:
   stage: test
   before_script:
     - echo "Setting up environment for tests..."
-    - cd local-project-test #change directory into the cloned project directory that has git
+    #- VESTIGIAL: cd local-project-test #change directory into the cloned project directory that has git
     - python3 -m venv venv #creates a virtual environment named venv
     - source venv/bin/activate #activate the venv
-    - venv/bin/pip install --upgrade pip
-    - venv/bin/pip install -r ../requirements.txt
-    - git remote add gitlab http://root:${GITLAB_TOKEN_1}@gitlab/local-testing/local-project-test.git
+    #VESTIGIAL: - venv/bin/pip install --upgrade pip
+    - pip install --upgrade pip
+    #VESTIGIAL: - venv/bin/pip install -r ../requirements.txt
+    - pip install -r requirements.txt
+    #- VESTIGIAL: git remote add gitlab http://root:${GITLAB_TOKEN_1}@gitlab/local-testing/local-project-test.git
       #since each job runs in an ephemeral executor container with a fresh clone of the repo, have to manually add the gitlab remote
       #have to manually change this if using a different remote
-    - git remote set-url gitlab http://root:${GITLAB_TOKEN_1}@gitlab/local-testing/local-project-test.git
+    #- VESTIGIAL: git remote set-url gitlab http://root:${GITLAB_TOKEN_1}@gitlab/local-testing/local-project-test.git
       #sets the git remote url to use the personal access token for authentication
       #assumes that the gitlab ce and the runner are running in docker containers on the same network
       #has to be hardcoded b/c runner container unaware of host machine's env file or GITLAB_PORT variable
       #because ci jobs are isolated and ephemeral
-    - git remote -v
-    - git config --global url."http://root:${GITLAB_PAT}@gitlab/".insteadOf "http://localhost:8929/"
+    #- VESTIGIAL: git remote -v
+    #- VESTIGIAL: git config --global url."http://root:${GITLAB_PAT}@gitlab/".insteadOf "http://localhost:8929/"
       #assumes that gitlab ce and the runner are running in docker containers on the same netowrk
       #has to be hardcoded b/c runner container unaware of host machine's env file or GITLAB_PORT variable
       #because ci jobs are isolated and ephemeral
-    - git remote -v
+    #- VESTIGIAL: git remote -v
     - export $(grep -v '^#|^$' .env | xargs) #load environment variables from .env file
       #'^#|^$' ignores comment lines and blank lines in the .env file
       #xargs turns key-value pairs into exportable variables
@@ -226,10 +228,12 @@ run_tests:
     - echo "Running tests..."
     #- apt-get update && apt-get install -y git #only needed if git not included in the base image
     - source venv/bin/activate #reactivate the venv
-    - venv/bin/python -m pytest ../tests
+    #VESTIGIAL: - venv/bin/python -m pytest ../tests
       #this runs all tests from the project root and runs all test in the tests/ directory
       #this is necessary so that pytest can find the app code to run tests on it
-
+    #- VESTIGIAL PATHING: venv/bin/python -m pytest tests
+    - python -m pytest -s tests
+    
 #deploy to Kubernetes
   #MAKE SURE MINIKUBE IS STARTED ON HOST
 deploy_local: 
@@ -283,7 +287,7 @@ deploy_local:
       else
       echo "ERROR: deploy.env artifact missing!"
       exit 1
-      fi 
+      fi
     - echo "Loaded registry image:$REGISTRY_IMAGE_NAME"
     - REGISTRY_PULL_TARGET="${REGISTRY_PULL_TARGET:-gitlab-local}"
     - echo "Deploying from registry:$REGISTRY_PULL_TARGET"
