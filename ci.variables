@@ -10,5 +10,5 @@ LOCAL_DEPLOY=true
 REMOTE_DEPLOY=false
 
 # ---- registry selection defaults (optional: override using CICD variables) ----
-DOCKER_PUSH_TARGET=gitlab-local
+DOCKER_PUSH_TARGET=github
 REMOTE_PULL_TARGET=github

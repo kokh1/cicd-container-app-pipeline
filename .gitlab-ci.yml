@@ -99,6 +99,8 @@ build_docker_image: #this is technically the name of the job
     - grype version
 
   script:
+    #capture build script start time metric
+    - build_script_start_time=$(date +%s) #example of capturing custom metric to send to prom/pushgateway
     #build image
     #- git remote set-url gitlab http://gitlab/local-testing/local-project-test.git
     - git remote -v
@@ -128,6 +130,10 @@ build_docker_image: #this is technically the name of the job
     #remove the builder container and anything it spawned
     - docker buildx rm mybuilder
     - docker info | grep -i insecure #added for debug
+    #EXPERIMENT: capture the build script duration metric and send to prom/pushgateway
+    #would need to install curl in the job container for this to work and ensure network reachability to the pushgateway from the job container
+    #- build_script_duration_seconds=$(( $(date +%s) - build_script_start_time )) #example of custom metric to send to prom/pushgateway
+    #- echo "build_script_duration_seconds" | curl --data-binary @- http://pushgateway:9091/metrics/job/build_docker_image/instance/gitlab
 
     #echo "Build complete for $DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
   
@@ -239,8 +245,10 @@ run_tests:
 deploy_local: 
   stage: deploy
   image: 
-    name: heyvaldemar/aws-kubectl:latest #has kubectl and awscli2
+    name: heyvaldemar/aws-kubectl:2.0.0 #has kubectl and awscli2
     entrypoint: [""]
+    docker:
+      user: root
     pull_policy: always #cannot use if-not-present with a shared runner
   variables:
     LOCAL_DEPLOY: "true" #deploy locally
@@ -367,10 +375,12 @@ deploy_local:
 deploy_remote: 
   stage: deploy
   image: 
-    name: heyvaldemar/aws-kubectl:latest #has kubectl and awscli2
+    name: heyvaldemar/aws-kubectl:2.0.0 #has kubectl and awscli2
     #not using docker:24.0.5-cli-alpine3.18 and then apk adding things and curling kubectl
     #can't use lachlanevenson/k8s-kubectl:latest bc though it has kubectl and git pre-installed, it doesn't have docker to mount the docker daemon from
-    entrypoint: [""]  #allow shell commands by overriding the default entrypoint for the kubectl image 
+    entrypoint: [""]  #allow shell commands by overriding the default entrypoint for the kubectl image
+    docker:
+      user: root
   variables:
     REMOTE_DEPLOY: "${REMOTE_DEPLOY:-false}" #default to false and override with CI/CD variable if needed
     KUBE_NAMESPACE: ${KUBE_NAMESPACE:-default} #default to 'default' namespace if not set in Gitlab CI/CD variables
@@ -533,8 +543,10 @@ deploy_remote:
 cleanup_deploy_remote:
   stage: deploy
   image: 
-    name: heyvaldemar/aws-kubectl:latest #has kubectl and awscli2
+    name: heyvaldemar/aws-kubectl:2.0.0 #has kubectl and awscli2
     entrypoint: [""]  #allow shell commands by overriding the default entrypoint for the kubectl image
+    docker:
+      user: root
   variables:
     KUBE_NAMESPACE: ${KUBE_NAMESPACE:-default} #default to 'default' namespace if not set in Gitlab CI/CD variables
   rules:

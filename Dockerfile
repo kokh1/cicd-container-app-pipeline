@@ -1,8 +1,9 @@
 #Docker configuration for containerizing the app
 #this is a Dockerfile (recipe) for containerizing the app
+    #if there were more build dependecies, a multistage build to make the final image smaller
 
 #use a lightweight Python image
-FROM python:3.9-slim
+FROM python:3.12-slim
     #regularly update base image to ensure latest security patches
     #note python:3.9-slim has a Critical CVE with an EPSS score .1 that was fixed in later versions
 

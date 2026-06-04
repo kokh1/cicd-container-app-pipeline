@@ -47,7 +47,7 @@ RELATED REPOSITORIES
 DEPENDENCIES/REQUIREMENTS
 1. Operating System
     + macOS (primary supported environment)
-        + most recently validated against: Seqouia 15.7.1 and 15.7.3 
+        + most recently validated against: Seqouia 15.7.7 
           + Note: on macOS, Docker runs inside a VM, so networking is more complex
     + Linux (readily adaptable) 
         + simpler networking; Docker runs natively/no Docker VM layer
@@ -56,7 +56,7 @@ DEPENDENCIES/REQUIREMENTS
 2. Required Tools:
     **Host machine**
     + Docker Desktop for macOS
-        + most recently validated against: Version 29.2.0
+        + most recently validated against: Version 29.5.2
     + Minikube (installed on host)
         + most recently validated against: v1.38.0 
     + Gitlab CE instance with custom configuration (URLs, registry, runner, secrets)
@@ -72,10 +72,9 @@ DEPENDENCIES/REQUIREMENTS
         + Python in CI tests job venv:
           + Version: 3.13
           + Most recently validated against Python 3.13
-          + See instructions for venv creation inline in `test_app.py`
-          + Additional modules imported in test_app.py at runtime in CI
+          + Additional modules imported in `test_app.py` at runtime in CI
           + venv is ephemeral and not included in the repo
-        + Python in helper script to provide provide for local registry
+        + Python in helper script to provide fe for local registry
           + Version: 3.14
           + Most recently validated against Python 3.14
           + Installed packages: 'streamlit', 'requests'
@@ -94,7 +93,7 @@ DEPENDENCIES/REQUIREMENTS
       + Secrets Manager
       + EKS (and anything it spawns)
         + for remote deployment workflow
-    + kubectl
+    + kubectl (local)
       + Client Version: v1.34.1
       + most recently validated against v1.34.1
       + includes built-in Kustomize v5.7.1
@@ -120,6 +119,8 @@ DEPENDENCIES/REQUIREMENTS
     + syft
       + Used in CI for SBOM generation for the containerized app image
       + Validated to work with the version provided by CI executor containers
+    + Grafana OSS
+      + Most recently validated against v12.4.3
 3. Optional Tools:
     + Homebrew (macOS package manager for installing/managing many helper tools)
     + streamlit (required for `local-registry_de.py` but runs using its own venv)
@@ -144,7 +145,7 @@ It is important that you do the following in the order presented.
     + `docker.compose.registry.yml` -> Local container registry
         + These Compose files will define the configuration for the containers that house each of these components. 
 + Create a dedicated Docker network for these containers to run on:
-`docker network create gitlab-network`
+`docker network create --driver bridge --subnet 172.25.0.0/24 --gateway 172.25.0.1 --ip-range 172.25.0.0/25 gitlab-network` 
     + Note: All Gitlab components should be on this network to allow communication between Gitlab CE instance, Runner and registry. 
 2. Editing `gitlab.rb`
 + Only one setting must be updated in GitLab CE's config file:
@@ -206,7 +207,7 @@ Before starting any Gitlab-related containers, you must create the shared Docker
   + `cd /path/to/gitlab/project1/directory`
     + Assumed path: `~/docker/gitlab/project1`
 + Create the local Docker network:
-  + `docker network create gitlab-network`
+  + `docker network create --driver bridge --subnet 172.25.0.0/24 --gateway 172.25.0.1 --ip-range 172.25.0.0/25 gitlab-network`
     + This network allows your Gitlab CE container, GitLab Runner container, and local registry to talk to each other.
     + Your docker-compose files must specify networks: [gitlab-network]
     + You only need to do this once (ever)
@@ -543,7 +544,7 @@ The CI/CD pipeline automates building, testing and deploying the application (in
 The main stages are: build, test, deploy_local, deploy_remote, cleanup_deploy_remote. 
 1. Build Job
 + Purpose: Containerize the application and tag and push the image to the target registry. 
-+ Base Image of the app (not the build job): Custom image based on `python:3.9.-slim` with:
++ Base Image of the app (not the build job): Custom image based on `python:3.12-slim` with:
     + Flask
     + requests
     + python-dotenv
@@ -702,6 +703,46 @@ TROUBELSHOOTING/TIPS
 + ☁️ AWS CLI flags are not consistent across services. For example: some commands take `--filter` and others take `--filters`. Recommended: if you plan to add AWS CLI commands, especially in CI jobs, verify the commands locally first. 
 + ***ANYTHING ELSE***
 
+METRICS/MONITORING with PROMETHEUS/GRAFANA
+This pipeline is configured to use the Prometheus that comes prepackaged with GitLab CE. Prometheus is used as an intermediary to send monitoring and metrics data to for the GitLab CE instance and the GitLab Runner to Grafana. 
++ In your GitLab CE instance, in the web UI, ensure the Prometheus plugin is enabled:
+  Admin > Settings > Metrics and profiling > Metrics-Prometheus
+  +Check the box to "Enable GitLab Prometheus metrics endpoint"
++ The GitLab Prometheus metrics endpoint is configured using the `GITLAB_OMNIBUS_CONFIG` environment variable in the `docker-compose.yml` file for the GitLab CE instance found in [text](https://github.com/kokh1/cicd-container-app-pipeline-ci-env) and exposing port 9090. 
+Using the environment variable avoids having to manually modify the `gitlab.rb` and prevents needing to run `gitlab ctl reconfigure`.
++ Because the GitLab Prometheus metrics endpoint is bound to the GitLab CE instance, it uses the same Docker Compose configuration as the GitLab CE instance, but has its own container and port.  
+  + Because the containers do not use stable ipv4 addresses by default, all containers (the GitLab CE insance, gitlab-runner and the local registry) on the custom `gitlab-network` need to run in a custom subnet and each of the networked containers is assigned a dedicated ipv4 address within that subnet (which is necessary to be able to reach them reliably). 
+  + This allows communication between the services running inside the containers on the network. 
+  + See the Compose files in [text](https://github.com/kokh1/cicd-container-app-pipeline-ci-env) for the exact configurations. 
+  + You can access the  GitLab Prometheus metrics endpoint in your browser by going to `http://localhost:9090`
++ The GitLab Runner can also be scraped using Prometheus. 
+  + This is also configured in [text](https://github.com/kokh1/cicd-container-app-pipeline-ci-env) by exposing port 9252 and adding it as a target in the `GITLAB_OMNIBUS_CONFIG` environment variable  in the `docker-compose.yml` file for the GitLab CE instance. 
+  + It also requires ensuring the listen address is set to `listen_address = "0.0.0.0:9252"` in the global setting of the runner's `config.toml`. See `https://github.com/kokh1/cicd-container-app-pipeline-ci-env/blob/main/runner-config/config.toml.example` for an example toml file. 
+  + You can reach the GitLab Runner Prometheus metrics endpoint at  `http://localhost:9252/metrics` This can be useful for getting the names of specific metrics to use within Grafana. 
++ The data captured by the GitLab Prometheus metrics endpoint is sent to a dockerized Grafana instance, which you can run with the command:
+  + `docker run --rm -d -p 3000:3000 --name=grafana --network=gitlab-network grafana/grafana-oss:latest`
+  + You can access the dockerized Grafana instance at `http://localhost:3000`
+    + Note: The suggested `docker run` command is intentionally designed to create an ephemeral Grafana instance with no persistent volumes to minimize resource usage.
+      +  If you want to produce a persistent container you can run the command without the `--rm` flag. This is necessary to capture longitudinal/time series data. However, as long as you don't delete the container, it will persist.
+      + Optional: If you want to create a mounted data volume for the dockerized Grafana instance, you can.  
+        + To create a mounted data volume using the suggested `docker run` command, add:
+          + `--volume=grafana-data:/var/lib/grafana` which will create a persistent local volume which maps to the container (to store the Grafana data), so it will persist as long as the container does. Doing this will add weight to your Docker daemon. Alternatively, you can also create a bind mounted external data volume that will persist even if the container is deleted. It is recommended to consider using a Compose file to manage your Grafana instance if you are going to have a persistent data volume. 
+  + For initial login to the Grafana instance use:
+    + `username: admin`
+    + `password: admin`
+      + You will be prompted to reset you password.
+      + See the Grafana docs for more information: `https://grafana.com/docs/grafana/latest/setup-grafana/sign-in-to-grafana/`
+  + Add the GitLab Prometheus metrics endpoint as a data source in Grafana:
+    + On the lefthand navigation menu, go to Data sources > Add data source.
+    + Configure at least the following fields:
+      + `Name: prometheus`
+      + `Prometheus server URL: http://host.docker.internal:9090`
+        + Note: This is necessary because Prometheus and Grafana are assumed to both be dockerized and running on the same custom network. 
+      + `Set HTTP method: GET`
+      + Press `Save&Test`
+    + Once configured, Grafana can be used as desired. 
++ NOTE: This project does not currently instrument the pipeline with job-level metrics because most job-level metrics (I.e., DORA metrics) not already provided natively require persistent storage to be useful and the storage costs do not justify their implementation for this use case. 
+
 TLS/HTTPS
 The pipeline uses HTTP only; however, it is designed to support TLS for the remote deployment using certificates stored in Secrets Manager and referenced in the Kubernetes manifests. TLS was omitted to avoid incurring costs associated with secrets storage and hosting. 
 
@@ -732,6 +773,8 @@ REFERENCES/FURTHER READING
 + https://docs.aws.amazon.com/eks/
 + https://curl.se/docs/
 + https://docs.streamlit.io/
++ https://prometheus.io/docs/introduction/overview/
++ https://grafana.com/docs
 + ***OTHERS?***
 
 OTHER WEIRDNESSES TO BE AWARE OF

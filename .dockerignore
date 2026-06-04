@@ -30,3 +30,6 @@ __pycache__/
 *.swp
 *.swo
 .idea/
+
+#ignore local venv
+venv/
